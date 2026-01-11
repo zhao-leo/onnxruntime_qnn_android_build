@@ -1,0 +1,95 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Initialize Java environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openjdk-17-jdk
+          echo "JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64" >> $GITHUB_ENV
+          echo "/usr/lib/jvm/java-17-openjdk-amd64/bin" >> $GITHUB_PATH
+
+      - name: Install required tools
+        run: |
+          sudo apt-get install -y make wget python3.11 python3-pip unzip git ninja-build
+
+      - name: Load config.env variables
+        run: |
+          # 读取 config.env 文件并导出所有变量
+          export $(grep -v '^#' config.env | xargs)
+          echo "QNN_VERSION=$QNN_VERSION" >> $GITHUB_ENV
+          echo "ORT_VERSION=$ORT_VERSION" >> $GITHUB_ENV
+          echo "NDK_VERSION=$NDK_VERSION" >> $GITHUB_ENV
+          echo "ANDROID_API=$ANDROID_API" >> $GITHUB_ENV
+
+      - name: Setup Android environment
+        run: |
+          # 安装 Android SDK
+          mkdir -p $HOME/Android/Sdk
+          cd $HOME/Android/Sdk
+
+          # 下载 Android SDK command line tools
+          wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
+          unzip commandlinetools-linux-9477386_latest.zip
+          mkdir -p cmdline-tools/latest
+          mv cmdline-tools/* cmdline-tools/latest/ 2>/dev/null || true
+
+          # 设置 ANDROID_HOME 环境变量
+          echo "ANDROID_HOME=$HOME/Android/Sdk" >> $GITHUB_ENV
+          echo "$HOME/Android/Sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+
+          # 接受许可证并安装 NDK
+          yes | $HOME/Android/Sdk/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $HOME/Android/Sdk/cmdline-tools/latest/bin/sdkmanager "ndk;${{ env.NDK_VERSION }}"
+          $HOME/Android/Sdk/cmdline-tools/latest/bin/sdkmanager "platforms;android-${{ env.ANDROID_API }}"
+          $HOME/Android/Sdk/cmdline-tools/latest/bin/sdkmanager "build-tools;34.0.0"
+
+      - name: Verify environment
+        run: |
+          echo "Java version:"
+          java -version
+          echo "JAVA_HOME: $JAVA_HOME"
+          echo "ANDROID_HOME: $ANDROID_HOME"
+          echo "QNN_VERSION: $QNN_VERSION"
+          echo "ORT_VERSION: $ORT_VERSION"
+          echo "NDK_VERSION: $NDK_VERSION"
+          echo "ANDROID_API: $ANDROID_API"
+
+      - name: Build with make
+        run: |
+          make build
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          JAVA_HOME: ${{ env.JAVA_HOME }}
+
+      - name: Package artifacts
+        run: |
+          make package
+
+      - name: Get artifact name
+        id: artifact
+        run: |
+          ARTIFACT_NAME=$(ls ort@*.tar.gz)
+          echo "name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ${{ steps.artifact.outputs.name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -5,6 +5,11 @@ on:
     tags:
       - "v*.*.*"
 
+permissions:
+  contents: write # Required for creating releases and uploading assets
+  packages: write # Required in some cases
+  actions: read # Required to read workflow status
+
 jobs:
   build:
     runs-on: ubuntu-latest
